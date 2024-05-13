@@ -2150,7 +2150,7 @@ action(UpdateDirState_FromReqDataResp, desc="") {
         tbe.dir_ownerIsExcl := false;
         if (tbe.needRemoveCluster) {
           assert(cluster_num > 1 && is_HN);
-          tbe.dir_sharers.removeCluster(in_msg.responder, tbe.requestor, cluster_num, l1_cache_num, rnv_num);
+          tbe.dir_sharers.removeCluster(in_msg.responder, machineID, cluster_num, l1_cache_num, rnv_num);
         } else {
           tbe.dir_sharers.remove(in_msg.responder);
         }
@@ -2163,7 +2163,9 @@ action(UpdateDirState_FromReqDataResp, desc="") {
           tbe.dir_ownerIsExcl := false;
           if (tbe.needRemoveCluster) {
             assert(cluster_num > 1 && is_HN);
-            tbe.dir_sharers.removeCluster(in_msg.responder, tbe.requestor, cluster_num, l1_cache_num, rnv_num);
+            // the requester should not be tbe.requestor, 
+            // Instead, the requestor should be machineID
+            tbe.dir_sharers.removeCluster(in_msg.responder, machineID, cluster_num, l1_cache_num, rnv_num);
           } else {
             tbe.dir_sharers.remove(in_msg.responder);
           }
@@ -2175,7 +2177,7 @@ action(UpdateDirState_FromReqDataResp, desc="") {
         if (tbe.reqType != CHIRequestType:WriteCleanFull) {
           if (tbe.needRemoveCluster) {
             assert(cluster_num > 1 && is_HN);
-            tbe.dir_sharers.removeCluster(in_msg.responder, tbe.requestor, cluster_num, l1_cache_num, rnv_num);
+            tbe.dir_sharers.removeCluster(in_msg.responder, machineID, cluster_num, l1_cache_num, rnv_num);
           } else {
             tbe.dir_sharers.remove(in_msg.responder);
           }
@@ -2189,7 +2191,7 @@ action(UpdateDirState_FromReqDataResp, desc="") {
         if (tbe.reqType != CHIRequestType:WriteCleanFull) {
           if (tbe.needRemoveCluster) {
             assert(cluster_num > 1 && is_HN);
-            tbe.dir_sharers.removeCluster(in_msg.responder, tbe.requestor, cluster_num, l1_cache_num, rnv_num);
+            tbe.dir_sharers.removeCluster(in_msg.responder, machineID, cluster_num, l1_cache_num, rnv_num);
           } else {
             tbe.dir_sharers.remove(in_msg.responder);
           }
@@ -2519,8 +2521,8 @@ action(UpdateDirState_FromReqResp, desc="") {
 
 action(UpdateDirState_FromSnpResp, desc="") {
   peek(rspInPort, CHIResponseMsg) {
-    DPRINTF(RubySlicc, "UpdateDirState_FromSnpResp::addr=%x, type=%d, responder=%d, to evict=%d\n"
-                     , in_msg.addr, in_msg.type, in_msg.responder, tbe.accAddr == in_msg.addr);
+    DPRINTF(RubySlicc, "UpdateDirState_FromSnpResp::addr=%x, type=%d, responder=%d, to evict=%d, wait_data_from_dirEvict=%d\n"
+                     , in_msg.addr, in_msg.type, in_msg.responder, tbe.accAddr == in_msg.addr, tbe.wait_data_from_dirEvict);
     if (in_msg.type == CHIResponseType:SnpResp_I) {
       // must have been a known sharer otherwise we would receive data
       assert(tbe.dir_sharers.isElement(in_msg.responder) ||
@@ -2555,10 +2557,8 @@ action(UpdateDirState_FromSnpResp, desc="") {
       // assert(tbe.dir_sharers.isElement(in_msg.responder));
       // assert(tbe.expected_snp_resp)
       // if (tbe.expected_snp_resp)
+
       assert(is_HN && cluster_num > 1);
-      //if (tbe.dir_sharers.isElement(in_msg.responder)) {
-      //  tbe.dir_sharers.remove(in_msg.responder); // remove here
-      //}
       if (tbe.wait_data_from_dirEvict) {
         assert(tbe.expected_snp_resp.hasExpected());
         tbe.expected_snp_resp.subExpectedCount(1); // because SnpResp_NONE only 1 beat
