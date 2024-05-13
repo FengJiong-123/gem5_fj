@@ -3138,7 +3138,7 @@ action(Send_CompI, desc="") {
                    , tbe.addr, tbe.dir_sharers.count());
 
   if (is_HN && cluster_num > 1) {
-    tbe.dir_sharers.removeCluster(tbe.requestor, tbe.requestor, cluster_num, l1_cache_num, rnv_num);
+    tbe.dir_sharers.removeCluster(tbe.requestor, machineID, cluster_num, l1_cache_num, rnv_num);
   } else {
     tbe.dir_sharers.remove(tbe.requestor);
   }
