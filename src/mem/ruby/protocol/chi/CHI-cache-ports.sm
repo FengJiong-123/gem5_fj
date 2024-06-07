@@ -155,8 +155,9 @@ in_port(snpRdyPort, CHIRequestMsg, snpRdy, rank=8,
     printResources();
     peek(snpRdyPort, CHIRequestMsg) {
       assert(in_msg.allowRetry == false);
-      DPRINTF(RubySlicc, "snpRdyPort:: addr=%x, type=%d, requestor=%d\n"
-                       , in_msg.addr, in_msg.type, in_msg.requestor);
+      DPRINTF(RubySlicc, "snpRdyPort:: addr=%x, type=%d, requestor=%d, state=%d\n"
+                       , in_msg.addr, in_msg.type, in_msg.requestor
+                       , getState(getCurrentActiveTBE(in_msg.addr), getCacheEntry(in_msg.addr), in_msg.addr));
       if (in_msg.usesTxnId) {
         TBE tbe := getDvmTBE(in_msg.txnId);
         if (is_valid(tbe)) {

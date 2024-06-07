@@ -386,6 +386,7 @@ action(Initiate_Snoop_Hazard, desc="") {
 
   // Switch to the new snoop TBE
   TBE prev_tbe := tbe;
+  DPRINTF(RubySlicc, "Initiate_Snoop_Hazard::addr=%x\n", address);
   peek(snpRdyPort, CHIRequestMsg) {
     set_tbe(allocateSnoopTBE(address, in_msg));
   }
@@ -1098,7 +1099,8 @@ action(Initiate_InvalidationSnoop, desc="") {
     // trigger only by the cluster mode Unique encounter the BLK_INTER
     if (cluster_model && (tbe.is_req_hazard || tbe.is_repl_hazard) && !tbe.waitUpstreamData) {
       //tbe.actions.push(Event:SnpInvPipe); 
-      DPRINTF(RubySlicc, "Initiate_Snoop_None::addr=%x\n", address);
+      DPRINTF(RubySlicc, "Initiate_InvalidationSnoop::To send snpNone::addr=%x cluster_model=%d\n"
+                       , address, cluster_model);
       tbe.actions.push(Event:SendSnpRespNONE);
     }
   }

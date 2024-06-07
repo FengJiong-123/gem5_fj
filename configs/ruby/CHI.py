@@ -171,7 +171,7 @@ def create_system(
         for cpu in cpus
     ]
     for rnf in ruby_system.rnf:
-        rnf.addPrivL2Cache(L2Cache)
+        rnf.addPrivL2Cache(L2Cache, options.cluster_num)
         cpu_sequencers.extend(rnf.getSequencers())
         all_cntrls.extend(rnf.getAllControllers())
         network_nodes.append(rnf)
@@ -199,7 +199,7 @@ def create_system(
     print("Start to init V rnf, num: ", options.num_rnv)
     if options.num_rnv != 0:
         ruby_system.rnv = [
-            CHI_RNV(ruby_system, L2Cache, system.cache_line_size.value)
+            CHI_RNV(ruby_system, L2Cache, system.cache_line_size.value, options.cluster_num)
             for i in range(options.num_rnv)
         ]
 

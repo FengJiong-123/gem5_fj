@@ -270,7 +270,7 @@ class CHI_L2Controller(CHI_Cache_Controller):
     Default parameters for a L2 Cache controller
     """
 
-    def __init__(self, ruby_system, cache, prefetcher):
+    def __init__(self, ruby_system, cache, prefetcher, cluster_num):
         super(CHI_L2Controller, self).__init__(ruby_system)
         self.sequencer = NULL
         self.cache = cache
@@ -281,7 +281,7 @@ class CHI_L2Controller(CHI_Cache_Controller):
         self.is_L2 = True
         self.enable_DMT = False
         self.enable_DCT = False
-        self.cluster_model = True
+        self.cluster_model = (cluster_num > 1)
         self.cluster_num = 1
         self.enable_gsr = False
         self.l1_cache_num = 16
@@ -576,7 +576,7 @@ class CHI_RNF(CHI_Node):
         return self._cpus
 
     # Adds a private L2 for each cpu
-    def addPrivL2Cache(self, cache_type, pf_type=None):
+    def addPrivL2Cache(self, cache_type, cluster_num, pf_type=None):
         self._ll_cntrls = []
         for cpu in self._cpus:
             l2_cache = cache_type(
@@ -586,7 +586,7 @@ class CHI_RNF(CHI_Node):
                 m5.fatal("Prefetching not supported yet")
             l2_pf = NULL
 
-            cpu.l2 = CHI_L2Controller(self._ruby_system, l2_cache, l2_pf)
+            cpu.l2 = CHI_L2Controller(self._ruby_system, l2_cache, l2_pf, cluster_num)
             #print(options.cluster_model)
 
             self._cntrls.append(cpu.l2)
@@ -600,7 +600,7 @@ class CHI_RNF(CHI_Node):
 
 
 class CHI_RNV(CHI_Node):
-    def __init__(self, ruby_system, cache_type, cache_line_size):
+    def __init__(self, ruby_system, cache_type, cache_line_size, cluster_num):
         super(CHI_RNV, self).__init__(ruby_system)
         #self._ll_cntrls = []
         self._block_size_bits = int(math.log(cache_line_size, 2))
@@ -608,7 +608,7 @@ class CHI_RNV(CHI_Node):
         l2_cache = cache_type(
                 start_index_bit=self._block_size_bits, is_icache=False
             )
-        self._cntrl = CHI_L2Controller(self._ruby_system, l2_cache, NULL)
+        self._cntrl = CHI_L2Controller(self._ruby_system, l2_cache, NULL, cluster_num)
 
         self.connectController(self._cntrl)
 
