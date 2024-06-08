@@ -127,7 +127,8 @@ in_port(datInPort, CHIDataMsg, datIn, rank=9,
           tbe.collect_except_snpNONE := true;
         }
       }
-      if (tbe.dataBlkValid.isFull() && cluster_model && in_msg.type == CHIDataType:CompData_UD_PD) {
+      if (tbe.dataBlkValid.isFull() && cluster_model && (in_msg.type == CHIDataType:CompData_UD_PD ||
+                                                         in_msg.type == CHIDataType:CompData_UC)) {
         // This is to figure the second received data
         // from the other processor trigger by Readunique hit 
         // upstream
