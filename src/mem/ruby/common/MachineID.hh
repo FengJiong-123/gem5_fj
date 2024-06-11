@@ -73,6 +73,24 @@ struct MachineID
     MachineID getMIDmul(int multiplier) {return MachineID(type, (num*multiplier));}
     MachineID getMIDdiv(int divider) {return MachineID(type, (num/divider));}
     bool getMIDequal(const MachineID & obj1) {return (type == obj1.type && num == obj1.num);}
+
+    bool sameCluster(const MachineID & obj1, int cluster_num, int core_num, int rnv_num) {
+        int domain_size = (core_num+rnv_num) / cluster_num;
+        NodeID IDgap = 0;
+        assert(type == obj1.type);
+        if (num > obj1.num) {
+            IDgap = num - obj1.num;
+        } else if (num < obj1.num) {
+            IDgap = obj1.num - num;
+        } else {
+            // the same ID
+            assert(num == obj1.num);
+            return true;
+        }
+
+        assert(IDgap > 0);
+        return ((IDgap % domain_size) == 0);
+    }
 };
 
 inline std::string

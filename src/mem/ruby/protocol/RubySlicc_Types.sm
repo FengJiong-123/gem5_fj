@@ -83,6 +83,7 @@ structure(MachineID, external = "yes", non_obj="yes") {
   MachineID getMIDmul(int);
   MachineID getMIDdiv(int);
   bool getMIDequal(MachineID);
+  bool sameCluster(MachineID, int, int, int);
 }
 
 structure (Set, external = "yes", non_obj="yes") {

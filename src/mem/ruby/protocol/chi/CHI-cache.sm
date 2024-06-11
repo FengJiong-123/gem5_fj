@@ -677,6 +677,8 @@ machine(MachineType:Cache, "Cache coherency protocol") :
     // when we had just sent dirty data upstream and are waiting for ack to set
     // dir_ownerExists
     bool needRemoveCluster,       desc="the hn need to remove the cluster number when update dir";
+    bool needReadMem,             desc="snoop upstream but no data so access memory";
+    bool hasProfileOutgoing,      desc="mark to not profiling again";
 
     // Helper structures to track expected events and additional transient
     // state info

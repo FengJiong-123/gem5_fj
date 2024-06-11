@@ -265,9 +265,6 @@ action(Initiate_Request, desc="") {
     was_retried := in_msg.allowRetry == false;
   }
   DirEntry dir_entry := getDirEntry(address);
-  //if(is_valid(dir_entry)) {
-  //  dir.makeInComplete(address);
-  //}
   copyCacheAndDir(cache_entry, dir_entry, tbe, initial);
 
   tbe.use_DMT := is_HN && enable_DMT;
@@ -286,7 +283,9 @@ action(Initiate_Request, desc="") {
   }
 
   if (is_valid(dir_entry) && is_HN && cluster_num > 1) {
-    tbe.is_RU_ReadUnique_or_Shared := (dir_entry.state == State:RU) && (tbe.reqType == CHIRequestType:ReadUnique || tbe.reqType == CHIRequestType:ReadShared);
+    tbe.is_RU_ReadUnique_or_Shared := (dir_entry.state == State:RU) && 
+                                      (tbe.reqType == CHIRequestType:ReadUnique || 
+                                       tbe.reqType == CHIRequestType:ReadShared);
   }
   
   DPRINTF(RubySlicc, "Initiate_Request::Addr=%x, was_retried=%d, DMT=%d, DCT=%d, alloc_entry=%d, dealloc_entry=%d, cluster_model=%d\n"
@@ -988,6 +987,16 @@ action(Initiate_CopyBack, desc="") {
 }
 
 action(Initiate_CopyBack_Stale, desc="") {
+  DirEntry dir_entry := getDirEntry(tbe.addr);
+  if (is_valid(dir_entry)) {
+    DPRINTF(RubySlicc, "Initiate_CopyBack_Stale::start copy back, addr=%x, dir state=%d, machineID=%d, requestor=%d\n"
+                    , tbe.addr, dir_entry.state, machineID, tbe.requestor);
+    if (is_HN && cluster_num > 1) {
+      tbe.needRemoveCluster := ((dir_entry.state == State:RU) ||
+                                (dir_entry.state == State:UD_RSD) ||
+                                (dir_entry.state == State:RUSD));
+    }
+  }
   tbe.expected_req_resp.addExpectedDataType(CHIDataType:CBWrData_SC);
   tbe.expected_req_resp.addExpectedDataType(CHIDataType:CBWrData_I);
   tbe.expected_req_resp.setExpectedCount(1);
@@ -1013,8 +1022,8 @@ action(Finish_CopyBack_Stale, desc="") {
 }
 
 action(Initiate_Evict, desc="") {
-  DPRINTF(RubySlicc, "Initiate_Evict::addr=%x, sharer num=%d\n"
-                   , tbe.addr, tbe.dir_sharers.count());
+  DPRINTF(RubySlicc, "Initiate_Evict::addr=%x, sharer num=%d, requestor=%d, ownerExists=%d, dir_owner=%d\n"
+                   , tbe.addr, tbe.dir_sharers.count(), tbe.requestor, tbe.dir_ownerExists, tbe.dir_owner);
   if ((is_HN == false) && (tbe.dir_sharers.count() == 1) &&
       (tbe.dataValid == false)) {
     // last sharer and we also don't have a copy the line, so we also need to
@@ -1032,6 +1041,20 @@ action(Initiate_Evict, desc="") {
       tbe.actions.push(Event:SendEvict);
     }
   } else {
+    DirEntry dir_entry := getDirEntry(tbe.addr);
+    if (is_HN && is_valid(dir_entry) && cluster_num > 1 &&
+       (!tbe.dir_ownerExists ||                        // no owner or owner not equal to requestor
+       ( tbe.dir_ownerExists && (tbe.requestor != tbe.dir_owner &&
+                                !tbe.requestor.sameCluster(tbe.dir_owner, cluster_num, l1_cache_num, rnv_num)
+                                )))) {
+      DPRINTF(RubySlicc, "Initiate_Evict::addr=%x, dir state=%d, machineID=%d, requestor=%d\n"
+                       , tbe.addr, dir_entry.state, machineID, tbe.requestor);
+      
+      tbe.needRemoveCluster := //((dir_entry.state == State:RU) ||
+                               // (dir_entry.state == State:RUSD) ||
+                               ((dir_entry.state == State:UD_RSD) ||
+                                (dir_entry.state == State:UD_RSC));
+    }
     tbe.actions.push(Event:SendCompIResp);
   }
   tbe.actions.push(Event:TagArrayWrite);
@@ -1098,10 +1121,15 @@ action(Initiate_InvalidationSnoop, desc="") {
   } else {
     // trigger only by the cluster mode Unique encounter the BLK_INTER
     if (cluster_model && (tbe.is_req_hazard || tbe.is_repl_hazard) && !tbe.waitUpstreamData) {
-      //tbe.actions.push(Event:SnpInvPipe); 
-      DPRINTF(RubySlicc, "Initiate_InvalidationSnoop::To send snpNone::addr=%x cluster_model=%d\n"
-                       , address, cluster_model);
-      tbe.actions.push(Event:SendSnpRespNONE);
+      //tbe.actions.push(Event:SnpInvPipe);
+      if (tbe.reqType == CHIRequestType:SnpUniqueFwd && (tbe.dataValid || tbe.dir_sharers.count() > 0)) {
+        // need SendSnpUniqueFwdCompData
+        // keep empty
+      } else {
+        DPRINTF(RubySlicc, "Initiate_InvalidationSnoop::To send snpNone::addr=%x cluster_model=%d\n"
+                        , address, cluster_model);
+        tbe.actions.push(Event:SendSnpRespNONE);
+      }
     }
   }
 
@@ -1660,7 +1688,6 @@ action(Send_SnpCleanInvalid_NoReq, desc="") {
     if(out_msg.Destination.isElement(tbe.requestor)) {
       out_msg.Destination.remove(tbe.requestor);
     }
-    out_msg.Destination.remove(tbe.requestor);
     // at least one sharer other than requestor
     assert(out_msg.Destination.count() > 0);
     out_msg.retToSrc := false;
@@ -1871,7 +1898,6 @@ action(Send_SnpSharedFwd_ToOwner, desc="") {
         Shares.AND(GSR);
       }
       
-      //out_msg.Destination.addCluster(tbe.dir_owner, tbe.requestor, cluster_num, l1_cache_num, rnv_num); // Shrink if GSR
       out_msg.Destination.addNetDest(Shares);
       // add excepted num
       tbe.expected_snp_resp.addExpectedCount(out_msg.Destination.count());
@@ -1900,23 +1926,43 @@ action(Send_SnpSharedFwd_ToSharer, desc="") {
   clearExpectedSnpResp(tbe);
   // if we have a block allocated for this line, asks snoopee to forward
   // data to us as well
+  // it is potentially no CompAck back
+  // so need to go to memory
   bool retToSrc := tbe.doCacheFill;
-
-  DPRINTF(RubySlicc, "Send_SnpSharedFwd_ToSharer::retToSrc=%d\n", retToSrc);
 
   if (retToSrc) {
     tbe.expected_snp_resp.addExpectedDataType(CHIDataType:SnpRespData_SC_Fwded_SC);
   } else {
     tbe.expected_snp_resp.addExpectedRespType(CHIResponseType:SnpResp_SC_Fwded_SC);
   }
-  tbe.expected_snp_resp.addExpectedCount(1);
+  if (is_HN && cluster_model) {
+    tbe.expected_snp_resp.addExpectedRespType(CHIResponseType:SnpResp_NONE);
+    tbe.needReadMem := true;
+  }
 
   enqueue(snpOutPort, CHIRequestMsg, snoop_latency) {
     prepareRequest(tbe, CHIRequestType:SnpSharedFwd, out_msg);
     // TODO should be random or the closest one to the fwd dest
-    out_msg.Destination.add(tbe.dir_sharers.smallestElement());
+    if (cluster_num > 1 && is_HN) {
+      // add all of the cluster num here
+      NetDest Shares;
+      Shares.addCluster(tbe.dir_sharers.smallestElement(), tbe.requestor.getMIDsub(2*(l1_cache_num+rnv_num))
+                                                         , cluster_num, l1_cache_num, rnv_num);
+      if (enable_gsr) {
+        Shares.AND(GSR);
+      }
+      out_msg.Destination.addNetDest(Shares);
+
+    } else {
+      out_msg.Destination.add(tbe.dir_sharers.smallestElement());
+    }
     out_msg.retToSrc := retToSrc;
+
+    tbe.expected_snp_resp.addExpectedCount(out_msg.Destination.count());
   }
+
+  DPRINTF(RubySlicc, "Send_SnpSharedFwd_ToSharer::addr=%x, expect=%d, needReadMem=%d, retToSrc=%d\n"
+                   , tbe.addr, tbe.expected_snp_resp.expected(), tbe.needReadMem, retToSrc);
 }
 
 action(Send_SnpOnce, desc="") {
@@ -2018,8 +2064,8 @@ action(Receive_ReqDataResp, desc="") {
   assert(tbe.expected_req_resp.hasExpected());
   peek(datInPort, CHIDataMsg) {
     // Decrement pending
-    DPRINTF(RubySlicc, "Receive_ReqDataResp::addr=%x, type=%d\n"
-                     , in_msg.addr, in_msg.type);
+    DPRINTF(RubySlicc, "Receive_ReqDataResp::addr=%x, type=%d, hasRecData=%d, bitMask=%s, dataBlkValid=%s\n"
+                     , in_msg.addr, in_msg.type, tbe.expected_req_resp.hasReceivedData(), in_msg.bitMask, tbe.dataBlkValid);
     if (tbe.expected_req_resp.receiveData(in_msg.type) == false) {
       error("Received unexpected message");
     }
@@ -2036,7 +2082,15 @@ action(Receive_ReqDataResp, desc="") {
         tbe.dataBlkValid.clear();
       }
       tbe.dataBlk.copyPartial(in_msg.dataBlk, in_msg.bitMask);
-      assert(tbe.dataBlkValid.isOverlap(in_msg.bitMask) == false);
+      // may receive same beats in cluster_model
+      if (!cluster_model) {
+        assert(tbe.dataBlkValid.isOverlap(in_msg.bitMask) == false);
+      } else {
+        if (tbe.dataBlkValid.isOverlap(in_msg.bitMask)) {
+          // another one sends data to this requestor
+          tbe.expected_req_resp.addExpectedCount(1);
+        }
+      }
       tbe.dataBlkValid.orMask(in_msg.bitMask);
     }
   }
@@ -2097,26 +2151,12 @@ action(Receive_SnpDataResp, desc="") {
         (in_msg.type == CHIDataType:SnpRespData_SC_PD_Fwded_SC) ||
         (in_msg.type == CHIDataType:SnpRespData_I_Fwded_SD_PD) ||
         (in_msg.type == CHIDataType:SnpRespData_I_PD_Fwded_SC))) {
-      //DPRINTF(GrapTrace, "Receive_SnpDataResp:: tbe data = %s\n", tbe.dataBlk);
-      //DPRINTF(GrapTrace, "Receive_SnpDataResp:: msg data = %s\n", in_msg.dataBlk);
       DataBlock temp_data_tbe;
       temp_data_tbe.copyPartial(tbe.dataBlk, in_msg.bitMask);
       DataBlock temp_data_msg;
       temp_data_msg.copyPartial(in_msg.dataBlk, in_msg.bitMask);
       assert(temp_data_tbe == temp_data_msg);
     }
-
-    //if (!((in_msg.type == CHIDataType:SnpRespData_I_PD) ||
-      //  (in_msg.type == CHIDataType:SnpRespData_SC_PD) ||
-      //  (in_msg.type == CHIDataType:SnpRespData_SC_Fwded_SD_PD) ||
-      //  (in_msg.type == CHIDataType:SnpRespData_SC_PD_Fwded_SC) ||
-      //  (in_msg.type == CHIDataType:SnpRespData_I_Fwded_SD_PD) ||
-      //  (in_msg.type == CHIDataType:SnpRespData_I_PD_Fwded_SC) ||
-      //  (in_msg.type == CHIDataType:SnpRespData_I))) {
-      //DPRINTF(GrapTrace, "Receive_SnpDataResp::addr=%x, type=%d, no data=%d, data=%s\n"
-      //                 , in_msg.addr, in_msg.type, tbe.dirEvict_no_data, in_msg.dataBlk);
-      //assert(tbe.wait_data_from_dirEvict);
-    //}
 
     if(((tbe.dataBlkValid.isFull() == false) ||
         (in_msg.type == CHIDataType:SnpRespData_I_PD) ||
@@ -2130,7 +2170,14 @@ action(Receive_SnpDataResp, desc="") {
         tbe.dataBlkValid.clear();
       }
       tbe.dataBlk.copyPartial(in_msg.dataBlk, in_msg.bitMask);
-      assert(tbe.dataBlkValid.isOverlap(in_msg.bitMask) == false || tbe.wait_data_from_dirEvict); // just remove for debug
+      if (!cluster_model) {
+        assert(tbe.dataBlkValid.isOverlap(in_msg.bitMask) == false || tbe.wait_data_from_dirEvict); // just remove for debug
+      } else {
+        //if (tbe.dataBlkValid.isOverlap(in_msg.bitMask) && !tbe.wait_data_from_dirEvict) {
+          // another one sends data to this requestor
+          //tbe.expected_req_resp.addExpectedCount(1);
+        //}
+      }
       tbe.dataBlkValid.orMask(in_msg.bitMask);
     }
   }
@@ -2154,7 +2201,14 @@ action(UpdateDirState_FromReqDataResp, desc="") {
           assert(cluster_num > 1 && is_HN);
           tbe.dir_sharers.removeCluster(in_msg.responder, machineID, cluster_num, l1_cache_num, rnv_num);
         } else {
-          tbe.dir_sharers.remove(in_msg.responder);
+          if (!is_HN) {
+            tbe.dir_sharers.remove(tbe.requestor);
+          }
+          else {
+            if (!cluster_model) {
+              tbe.dir_sharers.remove(tbe.requestor);
+            }
+          }
         }
 
       } else if (in_msg.type == CHIDataType:CBWrData_UD_PD) {
@@ -2169,7 +2223,14 @@ action(UpdateDirState_FromReqDataResp, desc="") {
             // Instead, the requestor should be machineID
             tbe.dir_sharers.removeCluster(in_msg.responder, machineID, cluster_num, l1_cache_num, rnv_num);
           } else {
-            tbe.dir_sharers.remove(in_msg.responder);
+            if (!is_HN) {
+              tbe.dir_sharers.remove(tbe.requestor);
+            }
+            else {
+              if (!cluster_model) {
+                tbe.dir_sharers.remove(tbe.requestor);
+              }
+            }
           }
         }
 
@@ -2181,7 +2242,14 @@ action(UpdateDirState_FromReqDataResp, desc="") {
             assert(cluster_num > 1 && is_HN);
             tbe.dir_sharers.removeCluster(in_msg.responder, machineID, cluster_num, l1_cache_num, rnv_num);
           } else {
-            tbe.dir_sharers.remove(in_msg.responder);
+            if (!is_HN) {
+              tbe.dir_sharers.remove(tbe.requestor);
+            }
+            else {
+              if (!cluster_model) {
+                tbe.dir_sharers.remove(tbe.requestor);
+              }
+            }
           }
         }
 
@@ -2195,7 +2263,14 @@ action(UpdateDirState_FromReqDataResp, desc="") {
             assert(cluster_num > 1 && is_HN);
             tbe.dir_sharers.removeCluster(in_msg.responder, machineID, cluster_num, l1_cache_num, rnv_num);
           } else {
-            tbe.dir_sharers.remove(in_msg.responder);
+            if (!is_HN) {
+              tbe.dir_sharers.remove(tbe.requestor);
+            }
+            else {
+              if (!cluster_model) {
+                tbe.dir_sharers.remove(tbe.requestor);
+              }
+            }
           }
         }
 
@@ -2320,7 +2395,8 @@ action(UpdateDirState_FromSnpDataResp, desc="") {
 action(UpdateDataState_FromReqDataResp, desc="") {
   assert(is_valid(tbe));
   // only perform the update once we received all chunks
-  if (tbe.expected_req_resp.hasReceivedData()) {
+  if (tbe.expected_req_resp.hasReceivedData() &&
+     (tbe.expected_req_resp.expected() == 0)) {
     assert(tbe.dataBlkValid.isFull());
     peek(datInPort, CHIDataMsg) {
 
@@ -2436,7 +2512,7 @@ action(UpdateDataState_FromSnpDataResp, desc="") {
   assert(is_valid(tbe));
   // only perform the update once we received all chunks
   if (tbe.expected_snp_resp.hasReceivedData()) {
-    assert(tbe.dataBlkValid.isFull() || tbe.wait_data_from_dirEvict);
+    assert(tbe.dataBlkValid.isFull() || tbe.wait_data_from_dirEvict || cluster_model);
     peek(datInPort, CHIDataMsg) {
 
       if ((in_msg.type == CHIDataType:SnpRespData_I_PD) ||
@@ -2523,8 +2599,9 @@ action(UpdateDirState_FromReqResp, desc="") {
 
 action(UpdateDirState_FromSnpResp, desc="") {
   peek(rspInPort, CHIResponseMsg) {
-    DPRINTF(RubySlicc, "UpdateDirState_FromSnpResp::addr=%x, type=%d, responder=%d, to evict=%d, wait_data_from_dirEvict=%d\n"
-                     , in_msg.addr, in_msg.type, in_msg.responder, tbe.accAddr == in_msg.addr, tbe.wait_data_from_dirEvict);
+    DPRINTF(RubySlicc, "UpdateDirState_FromSnpResp::addr=%x, type=%d, responder=%d, to evict=%d, wait_data_from_dirEvict=%d, snp_expect=%d\n"
+                     , in_msg.addr, in_msg.type, in_msg.responder, tbe.accAddr == in_msg.addr
+                     , tbe.wait_data_from_dirEvict, tbe.expected_snp_resp.expected());
     if (in_msg.type == CHIResponseType:SnpResp_I) {
       // must have been a known sharer otherwise we would receive data
       assert(tbe.dir_sharers.isElement(in_msg.responder) ||
@@ -2556,9 +2633,6 @@ action(UpdateDirState_FromSnpResp, desc="") {
 
     } else if (in_msg.type == CHIResponseType:SnpResp_NONE) {
       // expected from a sharer that already has it in shared state
-      // assert(tbe.dir_sharers.isElement(in_msg.responder));
-      // assert(tbe.expected_snp_resp)
-      // if (tbe.expected_snp_resp)
 
       assert(is_HN && cluster_num > 1);
       if (tbe.wait_data_from_dirEvict) {
@@ -2566,6 +2640,51 @@ action(UpdateDirState_FromSnpResp, desc="") {
         tbe.expected_snp_resp.subExpectedCount(1); // because SnpResp_NONE only 1 beat
         if (tbe.dir_sharers.isElement(in_msg.responder)) {
           tbe.dir_sharers.remove(in_msg.responder); // remove here
+        }
+      }
+
+      // it is possible that the all respond is SnpResp_NONE
+      // so we access memory to get data
+      if (!tbe.expected_snp_resp.hasExpected() &&  // last SnpResp_NONE
+          !tbe.wait_data_from_dirEvict && // not directory evict trigger
+         (!tbe.expected_snp_resp.receivedRespType(CHIResponseType:SnpResp_SC_Fwded_SC) || 
+          !tbe.expected_snp_resp.receivedDataType(CHIDataType:SnpRespData_SC_Fwded_SC))&& //  not receive data
+           tbe.needReadMem) {
+        // access memory
+        DPRINTF(RubySlicc, "UpdateDirState_FromSnpResp::to access mem::addr=%x\n"
+                         , in_msg.addr);
+        // reset request expect
+        tbe.expected_req_resp.setExpectedCount(0);
+        // clean up actions buffer
+        if (!tbe.actions.empty()) {
+          tbe.actions.pop();
+        }
+        if (!tbe.actions.empty()) {
+          tbe.actions.pop();
+        }
+        if (!tbe.actions.empty()) {
+          tbe.actions.pop();
+        }
+        // remove cluster
+        tbe.dir_sharers.removeCluster(in_msg.responder, tbe.requestor.getMIDsub(2*(l1_cache_num+rnv_num))
+                                                      , cluster_num, l1_cache_num, rnv_num);
+        if (tbe.dir_sharers.count() > 0) {
+          // find other sharers to get data
+          // start SnpToNoOwnerPipe again
+          tbe.actions.push(Event:SendSnpSharedFwdToSharer);
+          tbe.actions.pushNB(Event:WaitCompAck);
+          tbe.actions.push(Event:MaintainCoherence);
+        } else {
+          // start ReadShared miss pipe
+          tbe.requestorToBeExclusiveOwner := true;
+          tbe.dataMaybeDirtyUpstream := true; // SNF always replies with CompData_UC
+          if (enable_DMT_early_dealloc) {
+            tbe.actions.push(Event:SendRespSepData);
+          }
+          tbe.actions.push(Event:WaitCompAck);
+          tbe.actions.pushNB(Event:SendReadNoSnpDMT);
+          tbe.actions.push(Event:CheckCacheFill);
+          tbe.actions.push(Event:TagArrayWrite);
         }
       }
 
@@ -3136,13 +3255,21 @@ action(Send_CompI, desc="") {
   // seems to consider the cluster model real has sharers
   assert((tbe.dir_ownerExists == false) || (tbe.dir_owner != tbe.requestor));
 
-  DPRINTF(RubySlicc, "Send_CompI::addr=%x, sharer num=%d\n"
-                   , tbe.addr, tbe.dir_sharers.count());
+  DPRINTF(RubySlicc, "Send_CompI::addr=%x, requestor=%d, sharer num=%d\n"
+                   , tbe.addr, tbe.requestor, tbe.dir_sharers.count());
 
-  if (is_HN && cluster_num > 1) {
+  if (tbe.needRemoveCluster) {
+    assert(cluster_num > 1 && is_HN);
     tbe.dir_sharers.removeCluster(tbe.requestor, machineID, cluster_num, l1_cache_num, rnv_num);
   } else {
-    tbe.dir_sharers.remove(tbe.requestor);
+    if (!is_HN) {
+      tbe.dir_sharers.remove(tbe.requestor);
+    }
+    else {
+      if (!cluster_model) {
+        tbe.dir_sharers.remove(tbe.requestor);
+      }
+    }
   }
 
   enqueue(rspOutPort, CHIResponseMsg, response_latency) {
@@ -3869,8 +3996,13 @@ action(Profile_OutgoingStart, desc="") {
 action(Profile_OutgoingEnd_DataResp, desc="") {
   assert(is_valid(tbe));
   // completes once all data is received
-  if (tbe.expected_req_resp.hasReceivedData()) {
+  if (tbe.expected_req_resp.hasReceivedData()&&
+     (tbe.expected_req_resp.expected() == 0) &&
+     !tbe.hasProfileOutgoing) {
     outgoingTransactionEnd(address, tbe.rcvdRetryAck);
+    if (cluster_model) {
+      tbe.hasProfileOutgoing := true;
+    }
   }
 }
 
